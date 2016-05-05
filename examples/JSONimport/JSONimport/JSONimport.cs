@@ -6,23 +6,20 @@ namespace JSONimport
 {
     public class App : Application
     {
+        public JSONimportModel Model { get; set; }
+
         public App()
         {
-            // The root page of your application
-            var content = new ContentPage {
-                Title = "JSONimport",
-                Content = new StackLayout {
-                    VerticalOptions = LayoutOptions.Center,
-                    Children = {
-                        new Label {
-                            HorizontalTextAlignment = TextAlignment.Center,
-                            Text = "Welcome to Xamarin Forms!"
-                        }
-                    }
-                }
-            };
+            Model = new JSONimportModel();
 
-            MainPage = new NavigationPage(content);
+            // The root page of your application
+            var content = new TabbedPage {
+                Title = "JSONimport"
+            };
+            content.Children.Add(new PreviewJSON());
+            content.Children.Add(new ImportPage());
+
+            MainPage = content;
         }
 
         protected override void OnStart()
