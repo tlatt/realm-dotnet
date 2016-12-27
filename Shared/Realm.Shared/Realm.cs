@@ -18,6 +18,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -129,6 +130,63 @@ namespace Realms
             {
                 return realm.SharedRealmHandle.Compact();
             }
+        }
+
+        /// <summary>
+        ///  Deletes all the files associated with a realm. Hides knowledge of the auxiliary filenames from the programmer.
+        /// </summary>
+        /// <param name="configuration">A configuration which supplies the realm path.</param>
+        public static void DeleteRealm(RealmConfigurationBase configuration)
+        {
+            // TODO add cache checking when implemented, https://github.com/realm/realm-dotnet/issues/308
+            // when cache checking, uncomment in IntegrationTests.cs RealmInstanceTests.DeleteRealmFailsIfOpenSameThread and add a variant to test open on different thread
+            var lockOnWhileDeleting = new object();
+            lock (lockOnWhileDeleting)
+            {
+                var fullpath = configuration.DatabasePath;
+                File.Delete(fullpath);
+                File.Delete(fullpath + ".log_a");  // eg: name at end of path is EnterTheMagic.realm.log_a   
+                File.Delete(fullpath + ".log_b");
+                File.Delete(fullpath + ".log");
+                File.Delete(fullpath + ".lock");
+                File.Delete(fullpath + ".note");
+            }
+        }
+
+        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
+        internal static ResultsHandle CreateResultsHandle(IntPtr resultsPtr)
+        {
+            var resultsHandle = new ResultsHandle();
+
+            RuntimeHelpers.PrepareConstrainedRegions();
+            try
+            {
+                /* Retain handle in a constrained execution region */
+            }
+            finally
+            {
+                resultsHandle.SetHandle(resultsPtr);
+            }
+
+            return resultsHandle;
+        }
+
+        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
+        internal static ObjectHandle CreateObjectHandle(IntPtr objectPtr, SharedRealmHandle sharedRealmHandle)
+        {
+            var objectHandle = new ObjectHandle(sharedRealmHandle);
+
+            RuntimeHelpers.PrepareConstrainedRegions();
+            try
+            {
+                /* Retain handle in a constrained execution region */
+            }
+            finally
+            {
+                objectHandle.SetHandle(objectPtr);
+            }
+
+            return objectHandle;
         }
 
         #endregion
@@ -278,6 +336,14 @@ namespace Realms
             SharedRealmHandle.Close();  // Note: this closes the *handle*, it does not trigger realm::Realm::close().
         }
 
+        private void ThrowIfDisposed()
+        {
+            if (IsClosed)
+            {
+                throw new ObjectDisposedException(typeof(Realm).FullName, "Cannot access a closed Realm.");
+            }
+        }
+
         /// <summary>
         /// Generic override determines whether the specified <see cref="object"/> is equal to the current Realm.
         /// </summary>
@@ -315,6 +381,8 @@ namespace Realms
         /// <param name="other">The Realm to compare with the current Realm.</param>
         public bool IsSameInstance(Realm other)
         {
+            ThrowIfDisposed();
+
             return SharedRealmHandle.IsSameInstance(other.SharedRealmHandle);
         }
 
@@ -325,28 +393,9 @@ namespace Realms
         /// hash table.</returns>
         public override int GetHashCode()
         {
-            return (int)SharedRealmHandle.DangerousGetHandle();
-        }
+            ThrowIfDisposed();
 
-        /// <summary>
-        ///  Deletes all the files associated with a realm. Hides knowledge of the auxiliary filenames from the programmer.
-        /// </summary>
-        /// <param name="configuration">A configuration which supplies the realm path.</param>
-        public static void DeleteRealm(RealmConfigurationBase configuration)
-        {
-            // TODO add cache checking when implemented, https://github.com/realm/realm-dotnet/issues/308
-            // when cache checking, uncomment in IntegrationTests.cs RealmInstanceTests.DeleteRealmFailsIfOpenSameThread and add a variant to test open on different thread
-            var lockOnWhileDeleting = new object();
-            lock (lockOnWhileDeleting)
-            {
-                var fullpath = configuration.DatabasePath;
-                File.Delete(fullpath);
-                File.Delete(fullpath + ".log_a");  // eg: name at end of path is EnterTheMagic.realm.log_a   
-                File.Delete(fullpath + ".log_b");
-                File.Delete(fullpath + ".log");
-                File.Delete(fullpath + ".lock");
-                File.Delete(fullpath + ".note");
-            }
+            return (int)SharedRealmHandle.DangerousGetHandle();
         }
 
         [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
@@ -379,6 +428,8 @@ namespace Realms
         [Obsolete("Please create an object with new and pass to Add instead")]
         public T CreateObject<T>() where T : RealmObject, new()
         {
+            ThrowIfDisposed();
+
             RealmObject.Metadata metadata;
             var ret = CreateObject(typeof(T).Name, out metadata);
             if (typeof(T) != metadata.Schema.Type)
@@ -401,6 +452,8 @@ namespace Realms
         /// </remarks>
         public dynamic CreateObject(string className)
         {
+            ThrowIfDisposed();
+
             RealmObject.Metadata ignored;
             return CreateObject(className, out ignored);
         }
@@ -484,6 +537,8 @@ namespace Realms
         /// <returns>The passed object, so that you can write <c>var person = realm.Add(new Person { Id = 1 });</c></returns>
         public T Add<T>(T obj, bool update = false) where T : RealmObject
         {
+            ThrowIfDisposed();
+
             // This is not obsoleted because the compiler will always pick it for specific types, generating a bunch of warnings
             AddInternal(obj, typeof(T), update);
             return obj;
@@ -503,6 +558,8 @@ namespace Realms
         /// </remarks>
         public void Add(RealmObject obj, bool update = false)
         {
+            ThrowIfDisposed();
+
             AddInternal(obj, obj?.GetType(), update);
         }
 
@@ -564,42 +621,6 @@ namespace Realms
             metadata.Helper.CopyToRealm(obj, update, setPrimaryKey);
         }
 
-        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
-        internal static ResultsHandle CreateResultsHandle(IntPtr resultsPtr)
-        {
-            var resultsHandle = new ResultsHandle();
-
-            RuntimeHelpers.PrepareConstrainedRegions();
-            try
-            {
-                /* Retain handle in a constrained execution region */
-            }
-            finally
-            {
-                resultsHandle.SetHandle(resultsPtr);
-            }
-
-            return resultsHandle;
-        }
-
-        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.Success)]
-        internal static ObjectHandle CreateObjectHandle(IntPtr objectPtr, SharedRealmHandle sharedRealmHandle)
-        {
-            var objectHandle = new ObjectHandle(sharedRealmHandle);
-
-            RuntimeHelpers.PrepareConstrainedRegions();
-            try
-            {
-                /* Retain handle in a constrained execution region */
-            }
-            finally
-            {
-                objectHandle.SetHandle(objectPtr);
-            }
-
-            return objectHandle;
-        }
-
         /// <summary>
         /// Factory for a write Transaction. Essential object to create scope for updates.
         /// </summary>
@@ -614,6 +635,8 @@ namespace Realms
         /// <returns>A transaction in write mode, which is required for any creation or modification of objects persisted in a Realm.</returns>
         public Transaction BeginWrite()
         {
+            ThrowIfDisposed();
+
             return new Transaction(this);
         }
 
@@ -637,6 +660,8 @@ namespace Realms
         /// <param name="action">Action to perform inside a transaction, creating, updating or removing objects.</param>
         public void Write(Action action)
         {
+            ThrowIfDisposed();
+
             using (var transaction = BeginWrite())
             {
                 action();
@@ -676,6 +701,8 @@ namespace Realms
         /// <returns>A standard <c>Task</c> so it can be used by <c>await</c>.</returns>
         public Task WriteAsync(Action<Realm> action)
         {
+            ThrowIfDisposed();
+
             if (action == null)
             {
                 throw new ArgumentNullException(nameof(action));
@@ -703,6 +730,8 @@ namespace Realms
         /// </returns>
         public bool Refresh()
         {
+            ThrowIfDisposed();
+
             return SharedRealmHandle.Refresh();
         }
 
@@ -713,6 +742,8 @@ namespace Realms
         /// <returns>A queryable collection that without further filtering, allows iterating all objects of class T, in this realm.</returns>
         public IQueryable<T> All<T>() where T : RealmObject
         {
+            ThrowIfDisposed();
+
             var type = typeof(T);
             RealmObject.Metadata metadata;
             if (!Metadata.TryGetValue(type.Name, out metadata) || metadata.Schema.Type != type)
@@ -731,6 +762,8 @@ namespace Realms
         /// <returns>A queryable collection that without further filtering, allows iterating all objects of className, in this realm.</returns>
         public IQueryable<dynamic> All(string className)
         {
+            ThrowIfDisposed();
+
             RealmObject.Metadata metadata;
             if (!Metadata.TryGetValue(className, out metadata))
             {
@@ -751,6 +784,8 @@ namespace Realms
         /// <exception cref="RealmClassLacksPrimaryKeyException">If the RealmObject class T lacks an [PrimaryKey].</exception>
         public T Find<T>(long? primaryKey) where T : RealmObject
         {
+            ThrowIfDisposed();
+
             var metadata = Metadata[typeof(T).Name];
             var objectPtr = metadata.Table.Find(SharedRealmHandle, primaryKey);
             if (objectPtr == IntPtr.Zero)
@@ -770,6 +805,8 @@ namespace Realms
         /// <exception cref="RealmClassLacksPrimaryKeyException">If the RealmObject class T lacks an [PrimaryKey].</exception>
         public T Find<T>(string primaryKey) where T : RealmObject
         {
+            ThrowIfDisposed();
+
             var metadata = Metadata[typeof(T).Name];
             var objectPtr = metadata.Table.Find(SharedRealmHandle, primaryKey);
             if (objectPtr == IntPtr.Zero)
@@ -789,6 +826,8 @@ namespace Realms
         /// <exception cref="RealmClassLacksPrimaryKeyException">If the RealmObject class lacks an [PrimaryKey].</exception>
         public RealmObject Find(string className, long? primaryKey)
         {
+            ThrowIfDisposed();
+
             var metadata = Metadata[className];
             var objectPtr = metadata.Table.Find(SharedRealmHandle, primaryKey);
             if (objectPtr == IntPtr.Zero)
@@ -808,6 +847,8 @@ namespace Realms
         /// <exception cref="RealmClassLacksPrimaryKeyException">If the RealmObject class lacks an [PrimaryKey].</exception>
         public RealmObject Find(string className, string primaryKey)
         {
+            ThrowIfDisposed();
+
             var metadata = Metadata[className];
             var objectPtr = metadata.Table.Find(SharedRealmHandle, primaryKey);
             if (objectPtr == IntPtr.Zero)
@@ -828,6 +869,8 @@ namespace Realms
         /// <exception cref="ArgumentNullException">If you invoke this with a standalone object.</exception>
         public void Remove(RealmObject obj)
         {
+            ThrowIfDisposed();
+
             if (obj == null)
             {
                 throw new ArgumentNullException(nameof(obj));
@@ -848,6 +891,8 @@ namespace Realms
         /// <param name="range">The query to match for.</param>
         public void RemoveRange<T>(IQueryable<T> range)
         {
+            ThrowIfDisposed();
+
             if (range == null)
             {
                 throw new ArgumentNullException(nameof(range));
@@ -868,6 +913,8 @@ namespace Realms
         /// <typeparam name="T">Type of the objects to remove.</typeparam>
         public void RemoveAll<T>() where T : RealmObject
         {
+            ThrowIfDisposed();
+
             RemoveRange(All<T>());
         }
 
@@ -877,6 +924,8 @@ namespace Realms
         /// <param name="className">Type of the objects to remove as defined in the schema.</param>
         public void RemoveAll(string className)
         {
+            ThrowIfDisposed();
+
             RemoveRange(All(className));
         }
 
@@ -885,6 +934,8 @@ namespace Realms
         /// </summary>
         public void RemoveAll()
         {
+            ThrowIfDisposed();
+
             foreach (var metadata in Metadata.Values)
             {
                 var resultsHandle = MakeResultsForTable(metadata);
