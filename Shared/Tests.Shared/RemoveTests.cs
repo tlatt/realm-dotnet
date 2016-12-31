@@ -217,7 +217,10 @@ namespace IntegrationTests
                 action(otherRealm);
             }
 
-            Realm.DeleteRealm(otherRealm.Config);
+            if (path != _realm.Config.DatabasePath)
+            {
+                Realm.DeleteRealm(otherRealm.Config);
+            }
         }
     }
 }
